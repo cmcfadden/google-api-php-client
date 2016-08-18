@@ -56,16 +56,16 @@ class Google_AccessToken_Verify
       $http = new Client();
     }
 
-    if (is_null($cache)) {
-      if (class_exists('Stash\Pool')) {
-        $cache = new Pool(new FileSystem);
-      } else {
-        $cache = new MemoryCacheItemPool;
-      }
-    }
+    // if (is_null($cache)) {
+    //   if (class_exists('Stash\Pool')) {
+    //     $cache = new Pool(new FileSystem);
+    //   } else {
+    //     $cache = new MemoryCacheItemPool;
+    //   }
+    // }
 
     $this->http = $http;
-    $this->cache = $cache;
+    // $this->cache = $cache;
     $this->jwt = $this->getJwtService();
   }
 

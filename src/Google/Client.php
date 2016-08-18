@@ -953,7 +953,7 @@ class Google_Client
   public function getCache()
   {
     if (!$this->cache) {
-      $this->cache = $this->createDefaultCache();
+      // $this->cache = $this->createDefaultCache();
     }
 
     return $this->cache;
