@@ -56,16 +56,16 @@ class Google_AccessToken_Verify
       $http = new Client();
     }
 
-    // if (is_null($cache)) {
-    //   if (class_exists('Stash\Pool')) {
-    //     $cache = new Pool(new FileSystem);
-    //   } else {
-    //     $cache = new MemoryCacheItemPool;
-    //   }
-    // }
+    if (is_null($cache)) {
+      if (class_exists('Stash\Pool')) {
+        $cache = new Pool(new FileSystem);
+      } else {
+        $cache = new MemoryCacheItemPool;
+      }
+    }
 
     $this->http = $http;
-    // $this->cache = $cache;
+    $this->cache = $cache;
     $this->jwt = $this->getJwtService();
   }
 
@@ -126,6 +126,46 @@ class Google_AccessToken_Verify
       }
     }
 
+    // try again without cache.  This is obviously a terrible hack.
+    $certs = $this->getFederatedSignOnCerts(true);
+    foreach ($certs as $cert) {
+      $modulus = new BigInteger($this->jwt->urlsafeB64Decode($cert['n']), 256);
+      $exponent = new BigInteger($this->jwt->urlsafeB64Decode($cert['e']), 256);
+
+      $rsa = new RSA();
+      $rsa->loadKey(array('n' => $modulus, 'e' => $exponent));
+
+      try {
+        $payload = $this->jwt->decode(
+            $idToken,
+            $rsa->getPublicKey(),
+            array('RS256')
+        );
+
+        if (property_exists($payload, 'aud')) {
+          if ($audience && $payload->aud != $audience) {
+            return false;
+          }
+        }
+
+        // support HTTP and HTTPS issuers
+        // @see https://developers.google.com/identity/sign-in/web/backend-auth
+        $issuers = array(self::OAUTH2_ISSUER, self::OAUTH2_ISSUER_HTTPS);
+        if (!isset($payload->iss) || !in_array($payload->iss, $issuers)) {
+          return false;
+        }
+
+        return (array) $payload;
+      } catch (ExpiredException $e) {
+        return false;
+      } catch (ExpiredExceptionV3 $e) {
+        return false;
+      } catch (DomainException $e) {
+        // continue
+      }
+    }
+
+
     return false;
   }
 
@@ -172,10 +212,10 @@ class Google_AccessToken_Verify
   // Gets federated sign-on certificates to use for verifying identity tokens.
   // Returns certs as array structure, where keys are key ids, and values
   // are PEM encoded certificates.
-  private function getFederatedSignOnCerts()
+  private function getFederatedSignOnCerts($ignoreCache = false)
   {
     $certs = null;
-    if ($cache = $this->getCache()) {
+    if ($cache = $this->getCache() && !$ignoreCache) {
       $cacheItem = $cache->getItem('federated_signon_certs_v3', 3600);
       $certs = $cacheItem->get();
     }
