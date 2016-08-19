@@ -127,7 +127,7 @@ class Google_AccessToken_Verify
     }
 
     // try again without cache.  This is obviously a terrible hack.
-    $certs = $this->getFederatedSignOnCerts(true);
+    $certs = $this->getFederatedSignOnCerts(false);
     foreach ($certs as $cert) {
       $modulus = new BigInteger($this->jwt->urlsafeB64Decode($cert['n']), 256);
       $exponent = new BigInteger($this->jwt->urlsafeB64Decode($cert['e']), 256);
@@ -212,7 +212,7 @@ class Google_AccessToken_Verify
   // Gets federated sign-on certificates to use for verifying identity tokens.
   // Returns certs as array structure, where keys are key ids, and values
   // are PEM encoded certificates.
-  private function getFederatedSignOnCerts($ignoreCache = false)
+  private function getFederatedSignOnCerts($ignoreCache = true)
   {
     $certs = null;
     if ($cache = $this->getCache() && !$ignoreCache) {
