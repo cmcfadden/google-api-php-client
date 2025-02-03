@@ -24,7 +24,9 @@ use Google\Client;
 use Google\Service\Drive;
 use Google\AuthHandler\AuthHandlerFactory;
 use Google\Auth\FetchAuthTokenCache;
+use Google\Auth\CredentialsLoader;
 use Google\Auth\GCECache;
+use Google\Auth\Credentials\GCECredentials;
 use GuzzleHttp\Client as GuzzleClient;
 use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Response;
@@ -37,6 +39,7 @@ use ReflectionClass;
 use ReflectionMethod;
 use InvalidArgumentException;
 use Exception;
+use DomainException;
 
 class ClientTest extends BaseTest
 {
@@ -265,6 +268,16 @@ class ClientTest extends BaseTest
         $this->assertInstanceOf('Monolog\Handler\SyslogHandler', $handler);
     }
 
+    public function testLoggerFromConstructor()
+    {
+        $logger1 = new \Monolog\Logger('unit-test');
+        $client = new Client(['logger' => $logger1]);
+        $logger2 = $client->getLogger();
+        $this->assertInstanceOf('Monolog\Logger', $logger2);
+        $this->assertEquals('unit-test', $logger2->getName());
+        $this->assertSame($logger1, $logger2);
+    }
+
     public function testSettersGetters()
     {
         $client = new Client();
@@ -276,6 +289,7 @@ class ClientTest extends BaseTest
 
         $client->setRedirectUri('localhost');
         $client->setConfig('application_name', 'me');
+        $client->setLogger(new \Monolog\Logger('test'));
 
         $cache = $this->prophesize(CacheItemPoolInterface::class);
         $client->setCache($cache->reveal());
@@ -689,11 +703,22 @@ class ClientTest extends BaseTest
         $mockCacheItem->get()
             ->shouldBeCalledTimes(1)
             ->willReturn(true);
+        $mockUniverseDomainCacheItem = $this->prophesize(CacheItemInterface::class);
+        $mockUniverseDomainCacheItem->isHit()
+                ->willReturn(true);
+        $mockUniverseDomainCacheItem->get()
+            ->shouldBeCalledTimes(1)
+            ->willReturn('googleapis.com');
 
         $mockCache = $this->prophesize(CacheItemPoolInterface::class);
         $mockCache->getItem($prefix . GCECache::GCE_CACHE_KEY)
             ->shouldBeCalledTimes(1)
             ->willReturn($mockCacheItem->reveal());
+        // cache key from GCECredentials::getTokenUri() . 'universe_domain'
+        $mockCache->getItem('cc685e3a0717258b6a4cefcb020e96de6bcf904e76fd9fc1647669f42deff9bf') // google/auth < 1.41.0
+            ->willReturn($mockUniverseDomainCacheItem->reveal());
+        $mockCache->getItem(GCECredentials::cacheKey . 'universe_domain') // google/auth >= 1.41.0
+            ->willReturn($mockUniverseDomainCacheItem->reveal());
 
         $client = new Client(['cache_config' => $cacheConfig]);
         $client->setCache($mockCache->reveal());
@@ -849,11 +874,16 @@ class ClientTest extends BaseTest
         $credentials = $this->prophesize('Google\Auth\CredentialsLoader');
         $credentials->getCacheKey()
             ->willReturn('cache-key');
+        $credentials->getUniverseDomain()
+            ->willReturn('googleapis.com');
 
         // Ensure the access token provided by our credentials loader is used
-        $credentials->fetchAuthToken(Argument::any())
+        $credentials->updateMetadata([], null, Argument::any())
             ->shouldBeCalledOnce()
-            ->willReturn(['access_token' => 'abc']);
+            ->willReturn(['authorization' => 'Bearer abc']);
+        $credentials->getLastReceivedToken()
+            ->shouldBeCalledTimes(2)
+            ->willReturn(null);
 
         $client = new Client(['credentials' => $credentials->reveal()]);
 
@@ -909,5 +939,22 @@ class ClientTest extends BaseTest
             'enable_serial_consent' => 'true'
         ]);
         $this->assertStringContainsString('&enable_serial_consent=true', $authUrl1);
+    }
+    public function testUniverseDomainMismatch()
+    {
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage(
+            'The configured universe domain (example.com) does not match the credential universe domain (foo.com)'
+        );
+
+        $credentials = $this->prophesize(CredentialsLoader::class);
+        $credentials->getUniverseDomain()
+            ->shouldBeCalledOnce()
+            ->willReturn('foo.com');
+        $client = new Client([
+            'universe_domain' => 'example.com',
+            'credentials' => $credentials->reveal(),
+        ]);
+        $client->authorize();
     }
 }
